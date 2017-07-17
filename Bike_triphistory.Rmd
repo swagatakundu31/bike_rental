@@ -1,0 +1,120 @@
+---
+title: "Bike_SharingTripHistory_Analysis"
+author: "Swagata Kundu"
+date: "7/16/2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(readr)
+Q1_triphistory_2011 <- read_csv("~/swag_projects/Capstone_project/BikeRental_Deman_Prediction/2011-Q1-cabi-trip-history-data.csv", 
+    col_types = cols(Enddate = col_datetime(format = "%m/%d/%Y %H:%M"), 
+        Startdate = col_datetime(format = "%m/%d/%Y %H:%M")))
+
+
+Q2_triphistory_2011 <- read_csv("~/swag_projects/Capstone_project/BikeRental_Deman_Prediction/2011-Q2-cabi-trip-history-data.csv", 
+    col_types = cols(Enddate = col_datetime(format = "%m/%d/%Y %H:%M"), 
+        Startdate = col_datetime(format = "%m/%d/%Y %H:%M")))
+
+
+Q3_triphistory_2011 <- read_csv("~/swag_projects/Capstone_project/BikeRental_Deman_Prediction/2011-Q3-cabi-trip-history-data.csv", 
+    col_types = cols(`Enddate` = col_datetime(format = "%m/%d/%Y %H:%M"), 
+        `Startdate` = col_datetime(format = "%m/%d/%Y %H:%M")))
+
+
+
+Q4_triphistory_2011 <- read_csv("~/swag_projects/Capstone_project/BikeRental_Deman_Prediction/2011-Q4-cabi-trip-history-data.csv", 
+    col_types = cols(`Enddate` = col_datetime(format = "%m/%d/%Y %H:%M"), 
+        `Startdate` = col_datetime(format = "%m/%d/%Y %H:%M")))
+
+
+```
+
+creating a new variable "data" for Q1_triphistory_2011 dataset and installing qdapRegex
+for station numbers(start & end) extraction from entire station address
+```{r}
+data = rbind(Q1_triphistory_2011, Q2_triphistory_2011, Q3_triphistory_2011, Q4_triphistory_2011)
+
+         
+#install.packages("qdapRegex")
+library(qdapRegex)
+
+data$St_Stationnumber = gsub("[\\(\\)]", "", regmatches(data$Startstation, gregexpr("\\(.*?\\)", data$Startstation)))
+
+data$End_Stationnumber = gsub("[\\(\\)]", "", regmatches(data$Endstation, gregexpr("\\(.*?\\)", data$Endstation)))
+```
+
+Uploading master station terminals with lattitude longitude coordinates to get the street address and zipcode(start & end) correspondent to station numbers and saving in variable "zipcodes"
+To extract street address and zipcodes from latitude and longitude coordinates, we use ggplot2 & ggmap packages
+```{r}
+
+StationTerminalnos_latlong <- read_csv("~/swag_projects/Capstone_project/BikeRental_Deman_Prediction/Capital_Bike_Share_Locations.csv")
+
+
+zipcodes = StationTerminalnos_latlong
+
+#install.packages("ggplot2")
+library(ggplot2)
+#install.packages("ggmap")
+library(ggmap)
+
+zipcodes = zipcodes[,-c(7:16)]
+  
+location = do.call(rbind,
+                   lapply(1:nrow(zipcodes),
+                          function(i)revgeocode(as.numeric(zipcodes[i,6:5]))))
+
+
+
+zipcodes = cbind(zipcodes,location)
+
+#install.packages("stringr")
+library(stringr)
+zipcodes$zipcode <- substr(str_extract(zipcodes$location," [0-9]{5}, .+"),2,6)
+
+write.csv(zipcodes, file = "new_bikelocation.csv")
+```
+
+
+Using SQLDF to join multiple dataset sttaion terminal with corresponding zipcodes, In this joining process less than 1% data is lost which might be due to NA's
+```{r}
+
+new_bikelocation <- read_csv("~/swag_projects/Capstone_project/BikeRental_Deman_Prediction/new_bikelocation.csv")
+
+
+Publicholidays <- read_csv("~/swag_projects/Capstone_project/BikeRental_Deman_Prediction/Publicholidays_2011_2012.csv", 
+    col_types = cols(Date = col_date(format = "%m/%d/%Y")))
+
+
+
+data$sdate = as.Date(data$Startdate)
+
+
+Bike_trip_hist = sqldf("Select data.MemberType, data.sdate, data.Startdate,  data.St_Stationnumber ,
+                               new_bikelocation.zipcode as 'st_zipcode', data.Enddate, data.End_Stationnumber, x.zipcode as 'end_zipcode' , data.Duration , data.Bike_ID, 
+CASE WHEN date(data.sdate == holidays.Date)
+      THEN 1
+      ELSE 0
+END AS Holiday
+                        From data
+                        inner join new_bikelocation on data.St_Stationnumber =  new_bikelocation.TERMINAL_NUMBER
+                      INNER JOIN new_bikelocation as x on data.End_Stationnumber = x.TERMINAL_NUMBER
+                      LEFT OUTER JOIN Publicholidays as holidays on date(data.sdate) = date(holidays.Date)")
+```
+
+
+
+To validate our join , we run the following code
+```{r}
+sqldf("Select distinct(Bike_trip_hist.sdate)
+      from Bike_trip_hist
+      where Bike_trip_hist.Holiday = 1")
+
+write.csv(Bike_trip_hist, file = "Bike_triphistory_data.csv")
+```
+
+
+
+
